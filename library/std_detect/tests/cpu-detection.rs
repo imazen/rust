@@ -148,16 +148,107 @@ fn aarch64_linux() {
 #[test]
 #[cfg(all(any(target_arch = "aarch64", target_arch = "arm64ec"), target_os = "windows"))]
 fn aarch64_windows() {
-    println!("asimd: {:?}", is_aarch64_feature_detected!("asimd"));
-    println!("fp: {:?}", is_aarch64_feature_detected!("fp"));
-    println!("crc: {:?}", is_aarch64_feature_detected!("crc"));
-    println!("lse: {:?}", is_aarch64_feature_detected!("lse"));
-    println!("dotprod: {:?}", is_aarch64_feature_detected!("dotprod"));
-    println!("jsconv: {:?}", is_aarch64_feature_detected!("jsconv"));
-    println!("rcpc: {:?}", is_aarch64_feature_detected!("rcpc"));
-    println!("aes: {:?}", is_aarch64_feature_detected!("aes"));
-    println!("pmull: {:?}", is_aarch64_feature_detected!("pmull"));
-    println!("sha2: {:?}", is_aarch64_feature_detected!("sha2"));
+    // Print all detected features for CI visibility.
+    macro_rules! dump {
+        ($($name:tt),* $(,)?) => {
+            $(
+                println!("{}: {}", $name, is_aarch64_feature_detected!($name));
+            )*
+        };
+    }
+    dump!(
+        "asimd", "fp", "fp16", "fhm", "fcma", "bf16", "i8mm",
+        "rdm", "dotprod", "jsconv", "frintts",
+        "aes", "pmull", "sha2", "sha3", "sm4",
+        "crc", "lse", "lse2", "rcpc", "rcpc2",
+        "paca", "pacg", "bti", "dpb", "dpb2", "mte",
+        "dit", "sb", "ssbs", "flagm", "flagm2", "rand",
+        "sve", "sve2", "sve2p1",
+        "sve2-aes", "sve2-bitperm", "sve2-sha3", "sve2-sm4", "sve-b16b16",
+        "f32mm", "f64mm",
+        "sme", "sme2", "sme2p1",
+        "sme-b16b16", "sme-f16f16", "sme-f64f64",
+        "sme-f8f16", "sme-f8f32", "sme-fa64", "sme-i16i64", "sme-lutv2",
+        "ssve-fp8fma", "ssve-fp8dot4", "ssve-fp8dot2",
+        "hbc", "mops", "ecv", "cssc", "wfxt",
+        "fpmr", "lut", "faminmax", "fp8", "fp8fma", "fp8dot4", "fp8dot2",
+    );
+
+    // ── Structural invariants that hold on every Windows ARM64 machine ──
+    // Windows 11 on ARM requires ARMv8.1-A, so fp + asimd are always present.
+    assert!(is_aarch64_feature_detected!("fp"), "fp must be present on all WoA");
+    assert!(is_aarch64_feature_detected!("asimd"), "asimd must be present on all WoA");
+
+    // RDM derivation: if dotprod OR lse is detected, rdm must be set.
+    // This is the core architectural inference from ARM ARM K.a §D17.2.91.
+    let dotprod = is_aarch64_feature_detected!("dotprod");
+    let lse = is_aarch64_feature_detected!("lse");
+    let rdm = is_aarch64_feature_detected!("rdm");
+    if dotprod || lse {
+        assert!(
+            rdm,
+            "rdm must be set when dotprod({dotprod}) or lse({lse}) is detected \
+             (ARM ARM K.a §D17.2.91: ARMv8.1 + AdvSIMD → FEAT_RDM)"
+        );
+    }
+
+    // SVE hierarchy: sve2 implies sve, sve2p1 implies sve2.
+    if is_aarch64_feature_detected!("sve2") {
+        assert!(is_aarch64_feature_detected!("sve"), "sve2 implies sve");
+    }
+    if is_aarch64_feature_detected!("sve2p1") {
+        assert!(is_aarch64_feature_detected!("sve2"), "sve2p1 implies sve2");
+    }
+
+    // SME hierarchy: sme2 implies sme, sme2p1 implies sme2.
+    if is_aarch64_feature_detected!("sme2") {
+        assert!(is_aarch64_feature_detected!("sme"), "sme2 implies sme");
+    }
+    if is_aarch64_feature_detected!("sme2p1") {
+        assert!(is_aarch64_feature_detected!("sme2"), "sme2p1 implies sme2");
+    }
+
+    // Crypto: pmull implies aes (they come from the same PF_ARM constant).
+    if is_aarch64_feature_detected!("pmull") {
+        assert!(is_aarch64_feature_detected!("aes"), "pmull implies aes");
+    }
+}
+
+/// Hardware-pinned test for Snapdragon X Elite / X Plus (Qualcomm Oryon cores).
+/// Run with: `cargo test --ignored snapdragon_x_windows`
+#[test]
+#[ignore = "requires Snapdragon X on Windows — `cargo test --ignored snapdragon_x_windows`"]
+#[cfg(all(any(target_arch = "aarch64", target_arch = "arm64ec"), target_os = "windows"))]
+fn snapdragon_x_windows() {
+    macro_rules! must_have {
+        ($($name:tt),* $(,)?) => {
+            $(
+                assert!(
+                    is_aarch64_feature_detected!($name),
+                    concat!("Snapdragon X must have `", $name, "`")
+                );
+            )*
+        };
+    }
+    macro_rules! must_not_have {
+        ($($name:tt),* $(,)?) => {
+            $(
+                assert!(
+                    !is_aarch64_feature_detected!($name),
+                    concat!("Snapdragon X must NOT have `", $name, "`")
+                );
+            )*
+        };
+    }
+    // SDK 26100 IPFP coverage + RDM inference.
+    must_have!(
+        "asimd", "fp", "crc", "aes", "pmull", "sha2", "sha3",
+        "lse", "lse2", "rcpc", "dotprod", "jsconv",
+        "fp16", "i8mm", "bf16",
+        "rdm",  // derived from dotprod/lse
+    );
+    // Oryon explicitly omits SVE and MTE.
+    must_not_have!("sve", "sve2", "sme", "mte");
 }
 
 #[test]
